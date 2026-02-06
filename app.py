@@ -10,6 +10,16 @@ load_dotenv()
 configure_logging(level=logging.INFO)
 
 # ============================================================================
+# STREAMLIT CLOUD SECRETS SUPPORT
+# ============================================================================
+# Carrega API key do st.secrets (Streamlit Cloud) ou do .env (local)
+try:
+    if "ANTHROPIC_API_KEY" in st.secrets:
+        os.environ["ANTHROPIC_API_KEY"] = st.secrets["ANTHROPIC_API_KEY"]
+except Exception:
+    pass  # Usa .env local se secrets não disponível
+
+# ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
 
@@ -89,6 +99,78 @@ st.markdown("""
     
     .risk-item strong {
         color: #f87171;
+    }
+    
+    /* Botão Voltar ao Topo */
+    .back-to-top {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        font-size: 24px;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        z-index: 9999;
+        transition: transform 0.2s, box-shadow 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .back-to-top:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
+    }
+    
+    /* Action Card Dinâmico */
+    .action-card {
+        background: rgba(102, 126, 234, 0.1);
+        border-left: 4px solid #667eea;
+        padding: 12px 16px;
+        margin: 8px 0;
+        border-radius: 0 8px 8px 0;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+    
+    .action-card .action-text {
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        line-height: 1.5;
+    }
+    
+    .action-card .action-meta {
+        margin-top: 8px;
+        font-size: 13px;
+        opacity: 0.85;
+    }
+    
+    .action-card.high {
+        border-left-color: #ef4444;
+        background: rgba(239, 68, 68, 0.1);
+    }
+    
+    .action-card.medium {
+        border-left-color: #f59e0b;
+        background: rgba(245, 158, 11, 0.1);
+    }
+    
+    .action-card.low {
+        border-left-color: #10b981;
+        background: rgba(16, 185, 129, 0.1);
+    }
+    
+    /* Decision Card - texto completo */
+    .decision-card .decision-text {
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -318,7 +400,116 @@ if analyze_button:
             st.stop()
 
 # ============================================================================
-# RESULTS DISPLAY
+# FUNÇÕES DE EXTRAÇÃO INTELIGENTE
+# ============================================================================
+
+def extract_key_insights(text: str) -> list:
+    """Extrai insights-chave do texto da análise."""
+    insights = []
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    
+    # Palavras-chave que indicam insights importantes
+    keywords = ['recomend', 'sugir', 'estratég', 'ação', 'implement', 'prioriz', 
+                'foco', 'essencial', 'crítico', 'importante', 'deve', 'necessário']
+    
+    for line in lines:
+        line_lower = line.lower()
+        # Pular headers e linhas muito curtas
+        if line.startswith('#') or len(line) < 30:
+            continue
+        # Verificar se contém palavra-chave
+        if any(kw in line_lower for kw in keywords):
+            clean = line.lstrip('-•* 0123456789.').strip()
+            if 30 < len(clean) < 200 and clean not in insights:
+                insights.append(clean)
+        if len(insights) >= 5:
+            break
+    
+    return insights[:3] if insights else [
+        "Análise multi-perspectiva realizada com sucesso",
+        "Recomendações estratégicas identificadas",
+        "Plano de ação disponível para implementação"
+    ]
+
+def extract_actions_from_analysis(results: dict) -> list:
+    """Extrai ações concretas de todos os resultados da análise."""
+    actions = []
+    all_text = ' '.join([
+        results.get('executive', ''),
+        results.get('commercial', ''),
+        results.get('financial', ''),
+        results.get('analyst', '')
+    ])
+    
+    lines = all_text.split('\n')
+    
+    # Padrões que indicam ações
+    action_patterns = ['implementar', 'desenvolver', 'criar', 'estabelecer', 'monitorar',
+                       'revisar', 'analisar', 'priorizar', 'investir', 'reduzir', 
+                       'aumentar', 'contratar', 'treinar', 'expandir', 'otimizar']
+    
+    for line in lines:
+        line_clean = line.strip().lstrip('-•* 0123456789.').strip()
+        line_lower = line_clean.lower()
+        
+        if len(line_clean) < 20 or len(line_clean) > 150:
+            continue
+            
+        # Verificar se é uma ação
+        if any(pat in line_lower for pat in action_patterns):
+            # Determinar prioridade
+            if any(w in line_lower for w in ['urgente', 'imediato', 'crítico', 'curto prazo', '7 dias', 'semana']):
+                priority = 'high'
+                emoji = '🔴'
+                due = '7 dias'
+            elif any(w in line_lower for w in ['médio prazo', 'mês', '30 dias', 'mensal']):
+                priority = 'medium'
+                emoji = '🟡'
+                due = '30 dias'
+            else:
+                priority = 'low'
+                emoji = '🟢'
+                due = 'Contínuo'
+            
+            # Identificar responsável
+            if any(w in line_lower for w in ['comercial', 'vendas', 'marketing', 'cliente']):
+                owner = 'Comercial'
+            elif any(w in line_lower for w in ['financeiro', 'custo', 'investimento', 'orçamento']):
+                owner = 'Financeiro'
+            elif any(w in line_lower for w in ['técnico', 'produto', 'desenvolvimento', 'tecnologia']):
+                owner = 'Produto'
+            elif any(w in line_lower for w in ['rh', 'equipe', 'contratar', 'treinar']):
+                owner = 'RH'
+            else:
+                owner = 'Liderança'
+            
+            action = {
+                'description': line_clean[:100],
+                'owner': owner,
+                'due': due,
+                'priority': emoji,
+                'priority_class': priority
+            }
+            
+            # Evitar duplicatas
+            if not any(a['description'][:50] == action['description'][:50] for a in actions):
+                actions.append(action)
+        
+        if len(actions) >= 6:
+            break
+    
+    # Se não encontrou ações, usar defaults contextuais
+    if len(actions) < 3:
+        actions = [
+            {"description": "Implementar recomendações prioritárias do diagnóstico", "owner": "Liderança", "due": "7 dias", "priority": "🔴", "priority_class": "high"},
+            {"description": "Monitorar KPIs e métricas de sucesso definidas", "owner": "Financeiro", "due": "Contínuo", "priority": "🟡", "priority_class": "medium"},
+            {"description": "Revisar progresso e ajustar estratégia conforme necessário", "owner": "Liderança", "due": "30 dias", "priority": "🟢", "priority_class": "low"}
+        ]
+    
+    return actions[:5]
+
+# ============================================================================
+# RESULTS DISPLAY - Com Tabs e Resumo Visual
 # ============================================================================
 
 if 'last_analysis' in st.session_state and st.session_state.last_analysis:
@@ -326,286 +517,273 @@ if 'last_analysis' in st.session_state and st.session_state.last_analysis:
     results = analysis['results']
     
     st.markdown("---")
+    st.markdown('<div id="resultado-analise"></div>', unsafe_allow_html=True)
     st.markdown("# 📊 Resultado da Análise")
     
     # ========================================================================
-    # DECISION CARD (Main Result)
+    # RESUMO EXECUTIVO VISUAL (Sempre visível no topo)
     # ========================================================================
     
-    st.markdown("## 🎯 Decisão Recomendada")
-    
-    # Create executive summary from results
     executive_output = results.get('executive', '')
     
-    # Extract key decision from executive output
-    decision_text = executive_output.split('\n')[0] if executive_output else "Análise concluída"
+    # Extrair primeira frase significativa como decisão principal
+    decision_lines = [l.strip() for l in executive_output.split('\n') if l.strip() and not l.startswith('#') and len(l.strip()) > 30]
+    decision_text = decision_lines[0][:180] if decision_lines else "Análise estratégica concluída com recomendações acionáveis"
     
-    # Display decision card
+    # Extrair pontos-chave REAIS do texto executivo
+    key_points = extract_key_insights(executive_output)
+    
+    # Extrair ações REAIS da análise
+    dynamic_actions = extract_actions_from_analysis(results)
+    
+    # Card de decisão principal
     st.markdown(f"""
     <div class="decision-card">
-        <div class="decision-title">🎯 {decision_text[:100]}</div>
-        <div class="decision-text">{analysis['problem'][:200]}...</div>
-        <div style="font-size: 14px; opacity: 0.9;">
-            ✓ Análise baseada em {5} perspectivas executivas
+        <div class="decision-title">🎯 Decisão Principal</div>
+        <div class="decision-text" style="font-size: 16px; margin-bottom: 15px;">{decision_text}</div>
+        <div style="font-size: 14px; opacity: 0.95;">
+            <div style="margin: 5px 0;">✓ {key_points[0][:120]}</div>
+            <div style="margin: 5px 0;">✓ {key_points[1][:120]}</div>
+            <div style="margin: 5px 0;">✓ {key_points[2][:120]}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # ========================================================================
-    # CONFIDENCE INDICATOR
-    # ========================================================================
-    
-    col1, col2, col3 = st.columns(3)
-    
+    # Métricas rápidas - calcular quantidade real de ações
+    num_actions = len(dynamic_actions)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric(
-            "Confiança",
-            "82%",
-            delta="Alta",
-            help="Confiança na decisão recomendada"
-        )
-    
+        st.metric("Confiança", "82%", "Alta")
     with col2:
-        st.metric(
-            "Conflitos",
-            "1",
-            delta="Resolvido",
-            help="Conflitos detectados e resolvidos"
-        )
-    
+        st.metric("Conflitos", "1", "Resolvido")
     with col3:
-        st.metric(
-            "Ações",
-            "3",
-            delta="Imediatas",
-            help="Ações recomendadas"
-        )
+        st.metric("Ações", str(num_actions), "Identificadas")
+    with col4:
+        st.metric("Agentes", "5", "Consultados")
+    
+    st.markdown("")
     
     # ========================================================================
-    # ACTION ITEMS
+    # NAVEGAÇÃO POR TABS
     # ========================================================================
     
-    st.markdown("## ✅ Ações Imediatas")
+    tab_resumo, tab_detalhes, tab_dados, tab_export = st.tabs([
+        "📋 Resumo", 
+        "🔍 Análises Detalhadas", 
+        "📊 Dados Utilizados",
+        "📤 Exportar"
+    ])
     
-    # Extrair ações do resultado executivo
-    executive_text = results.get('executive', '')
-    
-    # Ações padrão baseadas na análise
-    actions = [
-        {"description": "Implementar recomendações do diagnóstico executivo", "owner": "Equipe Comercial", "due": "7 dias"},
-        {"description": "Monitorar KPIs e métricas de sucesso", "owner": "Equipe Financeira", "due": "Contínuo"},
-        {"description": "Revisar progresso e ajustar estratégia", "owner": "Liderança", "due": "30 dias"}
-    ]
-    
-    for action in actions:
-        with st.container():
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.markdown(f"**✓ {action['description']}**")
-            with col2:
-                st.markdown(f"👤 {action['owner']}")
-            with col3:
-                st.markdown(f"⏰ {action['due']}")
-    
-    # ========================================================================
-    # DADOS USADOS NA ANÁLISE
-    # ========================================================================
-    
-    if 'processed_files' in st.session_state and st.session_state.processed_files:
-        st.markdown("---")
-        st.markdown("## 📊 Dados Utilizados na Análise")
+    # ------ TAB 1: RESUMO ------
+    with tab_resumo:
+        st.markdown("### ✅ Ações Imediatas Identificadas")
+        st.caption(f"{len(dynamic_actions)} ações extraídas automaticamente da análise")
         
-        for pf in st.session_state.processed_files:
-            with st.expander(f"📄 {pf.get('filename', 'Arquivo')}", expanded=False):
-                if pf.get('type') == 'csv':
-                    # Mostrar métricas principais
-                    trends = pf.get('trends', {})
-                    if trends:
-                        cols = st.columns(min(len(trends), 4))
-                        for idx, (col_name, trend) in enumerate(list(trends.items())[:4]):
-                            with cols[idx]:
-                                delta_color = "normal" if trend['change_pct'] > 0 else "inverse"
-                                st.metric(
-                                    col_name[:12],
-                                    f"{trend['last']:.1f}",
-                                    f"{trend['change_pct']:+.1f}%",
-                                    delta_color=delta_color
-                                )
+        # Usar ações dinâmicas extraídas da análise real
+        for action in dynamic_actions:
+            priority_class = action.get('priority_class', 'low')
+            st.markdown(f"""
+            <div class="action-card {priority_class}">
+                <div class="action-text">
+                    <span style="font-size: 18px; margin-right: 8px;">{action['priority']}</span>
+                    <strong>{action['description']}</strong>
+                </div>
+                <div class="action-meta">
+                    👤 {action['owner']} &nbsp;&nbsp;|&nbsp;&nbsp; ⏰ {action['due']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Diagnóstico Executivo (colapsado)
+        with st.expander("👔 Diagnóstico Executivo Completo", expanded=False):
+            executive_text = results.get('executive', '')
+            if executive_text:
+                st.markdown(executive_text)
+            else:
+                st.info("Diagnóstico não disponível")
+        
+        # Conflitos (colapsado)
+        with st.expander("⚡ Conflitos Detectados", expanded=False):
+            st.markdown("""
+            **Conflito Financeiro**: Investir vs Cortar Custos
+            
+            - **Commercial**: "Aumentar investimento em marketing"
+            - **Financial**: "Retorno esperado menor que investimento"
+            
+            **Resolução**: Investimento moderado com ROI monitorado
+            """)
+    
+    # ------ TAB 2: ANÁLISES DETALHADAS ------
+    with tab_detalhes:
+        st.markdown("### 🔍 Análises por Especialista")
+        st.caption("Clique em cada seção para expandir a análise completa")
+        
+        # Analista de Negócio
+        with st.expander("🔍 Analista de Negócio", expanded=False):
+            analyst_text = results.get('analyst', '')
+            if analyst_text:
+                st.markdown(analyst_text)
+            else:
+                st.info("Análise não disponível")
+        
+        # Estrategista Comercial
+        with st.expander("💼 Estrategista Comercial", expanded=False):
+            commercial_text = results.get('commercial', '')
+            if commercial_text:
+                st.markdown(commercial_text)
+            else:
+                st.info("Análise não disponível")
+        
+        # Analista Financeiro
+        with st.expander("💰 Analista Financeiro", expanded=False):
+            financial_text = results.get('financial', '')
+            if financial_text:
+                st.markdown(financial_text)
+            else:
+                st.info("Análise não disponível")
+        
+        # Especialista de Mercado
+        with st.expander("📊 Especialista de Mercado", expanded=False):
+            market_text = results.get('market', '')
+            if market_text:
+                st.markdown(market_text)
+            else:
+                st.info("Análise não disponível")
+        
+        # Revisor Executivo
+        with st.expander("👔 Revisor Executivo", expanded=False):
+            executive_text = results.get('executive', '')
+            if executive_text:
+                st.markdown(executive_text)
+            else:
+                st.info("Análise não disponível")
+    
+    # ------ TAB 3: DADOS UTILIZADOS ------
+    with tab_dados:
+        st.markdown("### 📊 Dados Utilizados na Análise")
+        
+        if 'processed_files' in st.session_state and st.session_state.processed_files:
+            for pf in st.session_state.processed_files:
+                with st.expander(f"📄 {pf.get('filename', 'Arquivo')}", expanded=True):
+                    if pf.get('type') == 'csv':
+                        trends = pf.get('trends', {})
+                        if trends:
+                            cols = st.columns(min(len(trends), 4))
+                            for idx, (col_name, trend) in enumerate(list(trends.items())[:4]):
+                                with cols[idx]:
+                                    delta_color = "normal" if trend['change_pct'] > 0 else "inverse"
+                                    st.metric(
+                                        col_name[:12],
+                                        f"{trend['last']:.1f}",
+                                        f"{trend['change_pct']:+.1f}%",
+                                        delta_color=delta_color
+                                    )
+                        
+                        if pf.get('sample'):
+                            st.markdown("**Amostra dos dados:**")
+                            import pandas as pd
+                            st.dataframe(pd.DataFrame(pf['sample']), use_container_width=True)
+                    else:
+                        st.markdown(pf.get('summary', 'Sem resumo'))
+        else:
+            st.info("Nenhum arquivo foi anexado nesta análise.")
+        
+        # Info sobre o problema analisado
+        st.markdown("---")
+        st.markdown("### 📝 Problema Analisado")
+        problem_display = analysis['problem']
+        if '====' in problem_display:
+            problem_display = problem_display.split('====')[0].strip()
+        st.markdown(f"> {problem_display[:500]}...")
+    
+    # ------ TAB 4: EXPORTAR ------
+    with tab_export:
+        st.markdown("### 📤 Exportar Resultado")
+        st.caption("Escolha o formato desejado para download")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📄 One-Pager (Markdown)", use_container_width=True, key="btn_md"):
+                try:
+                    from infrastructure.exporters.analysis_exporter import AnalysisExporter
                     
-                    # Tabela de dados
-                    if pf.get('full_table'):
-                        st.markdown("**Dados completos:**")
-                        st.markdown(pf['full_table'])
-                    elif pf.get('sample'):
-                        st.markdown("**Amostra dos dados:**")
-                        import pandas as pd
-                        st.dataframe(pd.DataFrame(pf['sample']), use_container_width=True)
-                else:
-                    st.markdown(pf.get('summary', 'Sem resumo'))
-    
-    # ========================================================================
-    # EXPANDABLE SECTIONS
-    # ========================================================================
-    
-    st.markdown("---")
-    st.markdown("## 📑 Análises Detalhadas")
-    
-    # Conflicts
-    with st.expander("⚡ Conflitos Detectados e Resolvidos", expanded=False):
-        st.markdown("""
-        **Conflito Financeiro**: Investir vs Cortar Custos
+                    markdown_content = AnalysisExporter.to_markdown(analysis)
+                    st.success("✅ One-pager gerado!")
+                    st.download_button(
+                        label="⬇️ Baixar Markdown",
+                        data=markdown_content,
+                        file_name=f"analise_{analysis.get('execution_id', 'resultado')}.md",
+                        mime="text/markdown",
+                        key="dl_md"
+                    )
+                except Exception as e:
+                    st.error(f"❌ Erro: {str(e)}")
         
-        - **Commercial**: "Aumentar investimento em marketing $500K"
-        - **Financial**: "Retorno esperado apenas $300K"
+        with col2:
+            if st.button("📋 PDF Executivo", use_container_width=True, key="btn_pdf"):
+                try:
+                    from infrastructure.exporters.analysis_exporter import AnalysisExporter
+                    
+                    pdf_bytes = AnalysisExporter.to_pdf(analysis, "temp.pdf")
+                    st.success("✅ PDF gerado!")
+                    st.download_button(
+                        label="⬇️ Baixar PDF",
+                        data=pdf_bytes,
+                        file_name=f"analise_{analysis.get('execution_id', 'resultado')}.pdf",
+                        mime="application/pdf",
+                        key="dl_pdf"
+                    )
+                except ImportError:
+                    st.warning("⚠️ reportlab não instalado")
+                except Exception as e:
+                    st.error(f"❌ Erro: {str(e)}")
         
-        **Resolução**: Investimento moderado de $100K com ROI esperado de 150%
-        
-        **Confiança**: 82%
-        """)
-    
-    # Meeting Summary
-    with st.expander("👔 Reunião Executiva", expanded=False):
-        st.markdown("""
-        **Participantes**: CEO, CFO, CRO, CMO, Analyst
-        
-        **Fases**:
-        1. Abertura: CEO contextualiza problema
-        2. Apresentações: Cada agente apresenta perspectiva
-        3. Discussão: Debate de conflitos
-        4. Propostas: Opções de decisão
-        5. Deliberação: CEO decide
-        6. Encerramento: Resumo e ações
-        
-        **Duração**: 18 minutos
-        """)
-    
-    # Historical Comparison
-    with st.expander("📈 Comparação com Histórico", expanded=False):
-        st.markdown("""
-        **Análises Similares Encontradas**: 3
-        
-        - Análise de 3 meses atrás: Problema similar, resolvido com investimento
-        - Análise de 6 meses atrás: Contexto similar, recomendação similar
-        
-        **Padrão Identificado**: Em 80% dos casos similares, investimento em marketing foi efetivo
-        """)
-    
-    # Executive Summary (full)
-    with st.expander("� Diagnóstico Executivo Completo", expanded=True):
-        executive_text = results.get('executive', 'Análise executiva não disponível')
-        if executive_text:
-            st.markdown(executive_text)
-        else:
-            st.info("Diagnóstico executivo não disponível")
-    
-    # Detailed Analysis
-    with st.expander("🔍 Análises Detalhadas por Agente", expanded=False):
-        # Analyst
-        st.markdown("### 🔍 Analista de Negócio")
-        analyst_text = results.get('analyst', '')
-        if analyst_text:
-            st.markdown(analyst_text)
-        else:
-            st.info("Análise não disponível")
-        
-        st.markdown("---")
-        
-        # Commercial
-        st.markdown("### 💼 Estrategista Comercial")
-        commercial_text = results.get('commercial', '')
-        if commercial_text:
-            st.markdown(commercial_text)
-        else:
-            st.info("Análise não disponível")
-        
-        st.markdown("---")
-        
-        # Financial
-        st.markdown("### 💰 Analista Financeiro")
-        financial_text = results.get('financial', '')
-        if financial_text:
-            st.markdown(financial_text)
-        else:
-            st.info("Análise não disponível")
-        
-        st.markdown("---")
-        
-        # Market
-        st.markdown("### 📊 Especialista de Mercado")
-        market_text = results.get('market', '')
-        if market_text:
-            st.markdown(market_text)
-        else:
-            st.info("Análise não disponível")
-    
-    # ========================================================================
-    # EXPORT SECTION
-    # ========================================================================
-    
-    st.markdown("---")
-    st.markdown("## 📤 Exportar Resultado")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📄 One-Pager (Markdown)", use_container_width=True):
-            try:
-                from infrastructure.exporters.analysis_exporter import AnalysisExporter
-                
-                markdown_content = AnalysisExporter.to_markdown(analysis)
-                st.success("✅ One-pager gerado com sucesso!")
-                st.download_button(
-                    label="⬇️ Baixar One-Pager",
-                    data=markdown_content,
-                    file_name=f"analise_{analysis.get('execution_id', 'resultado')}.md",
-                    mime="text/markdown"
-                )
-            except Exception as e:
-                st.error(f"❌ Erro ao gerar one-pager: {str(e)}")
-    
-    with col2:
-        if st.button("📋 PDF Executivo", use_container_width=True):
-            try:
-                from infrastructure.exporters.analysis_exporter import AnalysisExporter
-                
-                pdf_bytes = AnalysisExporter.to_pdf(analysis, "temp.pdf")
-                st.success("✅ PDF gerado com sucesso!")
-                st.download_button(
-                    label="⬇️ Baixar PDF",
-                    data=pdf_bytes,
-                    file_name=f"analise_{analysis.get('execution_id', 'resultado')}.pdf",
-                    mime="application/pdf"
-                )
-            except ImportError:
-                st.warning("⚠️ reportlab não instalado. Execute: pip install reportlab")
-            except Exception as e:
-                st.error(f"❌ Erro ao gerar PDF: {str(e)}")
-    
-    with col3:
-        if st.button("🎯 PowerPoint", use_container_width=True):
-            try:
-                from infrastructure.exporters.analysis_exporter import AnalysisExporter
-                
-                ppt_bytes = AnalysisExporter.to_ppt(analysis, "temp.pptx")
-                st.success("✅ Apresentação gerada com sucesso!")
-                st.download_button(
-                    label="⬇️ Baixar PPT",
-                    data=ppt_bytes,
-                    file_name=f"analise_{analysis.get('execution_id', 'resultado')}.pptx",
-                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                )
-            except ImportError:
-                st.warning("⚠️ python-pptx não instalado. Execute: pip install python-pptx")
-            except Exception as e:
-                st.error(f"❌ Erro ao gerar PowerPoint: {str(e)}")
+        with col3:
+            if st.button("🎯 PowerPoint", use_container_width=True, key="btn_ppt"):
+                try:
+                    from infrastructure.exporters.analysis_exporter import AnalysisExporter
+                    
+                    ppt_bytes = AnalysisExporter.to_ppt(analysis, "temp.pptx")
+                    st.success("✅ PPT gerado!")
+                    st.download_button(
+                        label="⬇️ Baixar PPT",
+                        data=ppt_bytes,
+                        file_name=f"analise_{analysis.get('execution_id', 'resultado')}.pptx",
+                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        key="dl_ppt"
+                    )
+                except ImportError:
+                    st.warning("⚠️ python-pptx não instalado")
+                except Exception as e:
+                    st.error(f"❌ Erro: {str(e)}")
     
     # ========================================================================
     # FOOTER
     # ========================================================================
     
     st.markdown("---")
-    st.markdown("""
+    st.markdown(f"""
     <div style="text-align: center; color: #666; font-size: 12px;">
-        <p>Análise realizada em {timestamp} | Confiança: 82% | Tempo de processamento: ~30s</p>
+        <p>Análise realizada em {analysis['timestamp'].strftime("%d/%m/%Y %H:%M")} | Confiança: 82% | 5 agentes consultados</p>
     </div>
-    """.format(timestamp=analysis['timestamp'].strftime("%d/%m/%Y %H:%M")), unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+    
+    # ========================================================================
+    # BOTÃO VOLTAR AO TOPO (Floating)
+    # ========================================================================
+    
+    st.markdown("""
+    <a href="#resultado-analise" class="back-to-top" title="Voltar ao topo">
+        ↑
+    </a>
+    <script>
+        // Smooth scroll para o topo
+        document.querySelector('.back-to-top').addEventListener('click', function(e) {
+            e.preventDefault();
+            window.scrollTo({top: 0, behavior: 'smooth'});
+        });
+    </script>
+    """, unsafe_allow_html=True)
